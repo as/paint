@@ -43,6 +43,19 @@ type Rectangle struct {
 
 // type Drawd struct { //defined in other file
 
+type DrawE struct {
+	hdr   byte
+	dstid uint32
+	srcid uint32
+	c     Point
+	a     uint32
+	b     uint32
+	thick uint32
+	sp    Point
+	alpha uint32
+	phi   uint32
+}
+
 func (z *Point) ReadBinary(r io.Reader) (err error) {
 	if z == nil {
 		return fmt.Errorf("ReadBinary: z nil")
@@ -164,6 +177,107 @@ func (z Drawd) WriteBinary(w io.Writer) (err error) {
 	}
 
 	if err := z.maskp.WriteBinary(w); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (z *DrawE) ReadBinary(r io.Reader) (err error) {
+	if z == nil {
+		return fmt.Errorf("ReadBinary: z nil")
+	}
+
+	if err := binary.Read(r, binary.LittleEndian, &z.hdr); err != nil {
+		return err
+	}
+
+	if err := binary.Read(r, binary.LittleEndian, &z.dstid); err != nil {
+		return err
+	}
+
+	if err := binary.Read(r, binary.LittleEndian, &z.srcid); err != nil {
+		return err
+	}
+
+	{
+
+		r := io.LimitReader(r, int64(8))
+		if err := z.c.ReadBinary(r); err != nil {
+			return err
+		}
+	}
+
+	if err := binary.Read(r, binary.LittleEndian, &z.a); err != nil {
+		return err
+	}
+
+	if err := binary.Read(r, binary.LittleEndian, &z.b); err != nil {
+		return err
+	}
+
+	if err := binary.Read(r, binary.LittleEndian, &z.thick); err != nil {
+		return err
+	}
+
+	{
+
+		r := io.LimitReader(r, int64(8))
+		if err := z.sp.ReadBinary(r); err != nil {
+			return err
+		}
+	}
+
+	if err := binary.Read(r, binary.LittleEndian, &z.alpha); err != nil {
+		return err
+	}
+
+	if err := binary.Read(r, binary.LittleEndian, &z.phi); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (z DrawE) WriteBinary(w io.Writer) (err error) {
+
+	if err := binary.Write(w, binary.LittleEndian, z.hdr); err != nil {
+		return err
+	}
+
+	if err := binary.Write(w, binary.LittleEndian, z.dstid); err != nil {
+		return err
+	}
+
+	if err := binary.Write(w, binary.LittleEndian, z.srcid); err != nil {
+		return err
+	}
+
+	if err := z.c.WriteBinary(w); err != nil {
+		return err
+	}
+
+	if err := binary.Write(w, binary.LittleEndian, z.a); err != nil {
+		return err
+	}
+
+	if err := binary.Write(w, binary.LittleEndian, z.b); err != nil {
+		return err
+	}
+
+	if err := binary.Write(w, binary.LittleEndian, z.thick); err != nil {
+		return err
+	}
+
+	if err := z.sp.WriteBinary(w); err != nil {
+		return err
+	}
+
+	if err := binary.Write(w, binary.LittleEndian, z.alpha); err != nil {
+		return err
+	}
+
+	if err := binary.Write(w, binary.LittleEndian, z.phi); err != nil {
 		return err
 	}
 

@@ -14,6 +14,7 @@ import (
 	"image/color"
 	"image/draw"
 	_ "image/png"
+	"image/color/palette"
 	"io"
 	"log"
 	"math"
@@ -23,8 +24,8 @@ import (
 	//"encoding/binary"
 	"bytes"
 	"flag"
-	//"github.com/as/frame"
-)
+	//"github.com/as/frame"	
+ )
 
 var remote = flag.String("s", ":443", "endpoint to connect to or listen on (if host is omitted)")
 
@@ -55,13 +56,14 @@ func mustdecode(file string) draw.Image {
 	return img
 }
 
-var winSize = image.Pt(1024, 768)
+var winSize = image.Pt(2560,1440)
 
 var cnt int
 
 //wire9 Point X[4,int32] Y[4,int32]
 //wire9 Rectangle Min[,Point] Max[,Point]
 //wire9 Drawd hdr[1] dstid[4] srcid[4] maskid[4] r[,Rectangle] sp[,Point] maskp[,Point]
+//wire9 DrawE hdr[1] dstid[4] srcid[4] c[8,Point] a[4] b[4] thick[4] sp[8,Point] alpha[4] phi[4]
 
 func (r Rectangle) Canon() image.Rectangle {
 	return image.Rect(int(r.Min.X), int(r.Min.Y), int(r.Max.X), int(r.Max.Y))
@@ -94,8 +96,8 @@ type Msg struct {
 var client bool
 
 func main() {
-	joinc := make(chan *Client, 10)
-	drawin := make(chan Msg, 10)
+	joinc := make(chan *Client, 1)
+	drawin := make(chan Msg)
 	selecting := false
 	focused := false
 
@@ -112,26 +114,34 @@ func main() {
 
 		// Draw device - anything sent into its out channel gets drawn on the local
 		// screen
-		devdraw := &Client{id: -1, joined: time.Now(), out: make(chan Msg, 10)}
-		joinc <- devdraw
+		devdraw := &Client{id: -1, joined: time.Now(), out: make(chan Msg)}
+		joinc <- devdraw		
 		go func() {
+			src, dst := cyan, buf.RGBA()
+			drawGradient(buf.RGBA(), image.Rect(0,0,180,256*7))
+			drawGradient(buf.RGBA(), image.Rect(0,0,180,256*7))
+			drawGradient(buf.RGBA(), image.Rect(0,0,180,256*7))
 			for {
+				ref := func(){
+						select {
+						case <-tick.C:
+							win.SendFirst(paint.Event{})
+						default:
+						}
+				}
 				for e := range devdraw.out {
-					fmt.Println("draw device", e)
 					switch e := e.Value.(type) {
+					case DrawE:
+						Ellipse(dst, e.c.Canon(), src, int(e.a), int(e.b), int(e.thick), image.ZP, int(e.alpha), int(e.phi))
+						ref()
 					case Drawd:
-						src, dst := cyan, buf.RGBA()
 						r := e.r
 						sp := e.sp
 						fmt.Printf("dst=%d r=%v, src=%d, sp=%v\n", e.dstid, r, e.srcid, sp)
 						x := r.Canon()
 						fmt.Println(x)
 						draw.Draw(dst, r.Canon(), src, sp.Canon(), draw.Over)
-						select {
-						case <-tick.C:
-							win.SendFirst(paint.Event{})
-						default:
-						}
+						ref()
 					case interface{}:
 						fmt.Printf("unknown message: %#v\n", e)
 					}
@@ -174,7 +184,7 @@ func main() {
 		handle := func(conn net.Conn, c *Client) {
 			go func(w io.Writer) {
 				for msg := range c.out {
-					d := msg.Value.(Drawd)
+					d := msg.Value.(DrawE)
 					bw := new(bytes.Buffer)
 					d.WriteBinary(bw)
 					//fmt.Printf("drawout: send: %q\n", bw.Bytes())
@@ -188,11 +198,11 @@ func main() {
 				if err != nil {
 					return
 				}
-				if buf[0] != 'd' {
+				if buf[0] != 'E' {
 					fmt.Printf("unknown draw message: %q\n", string(buf[:n]))
 					os.Exit(1)
 				}
-				d := Drawd{}
+				d := DrawE{}
 				(&d).ReadBinary(bytes.NewReader(buf[:n]))
 				fmt.Println("client: send", d)
 				drawin <- Msg{Client: c, Value: d}
@@ -234,14 +244,29 @@ func main() {
 		}()
 
 		// UI - event loop
+		brush := &Brush{
+			image.Rect(-2, -2, 2, 2),
+			1,
+			1,
+		}
 		for {
 			switch e := win.NextEvent().(type) {
 			case key.Event:
 				if e.Direction != key.DirPress && e.Direction != key.DirNone {
 					break
 				}
+				r := brush.Rectangle
 				switch e.Code {
-				case key.CodeRightArrow:
+				case key.CodeUpArrow:
+					brush.Rectangle = image.Rect(
+						r.Min.X-brush.dx, r.Min.Y-brush.dy,
+						r.Max.X+brush.dx, r.Max.Y+brush.dy,
+					)
+				case key.CodeDownArrow:
+					brush.Rectangle = image.Rect(
+						r.Min.X+brush.dx, r.Min.Y+brush.dy,
+						r.Max.X-brush.dx, r.Max.Y-brush.dy,
+					)
 				case key.CodeLeftArrow:
 				case key.CodeDeleteBackspace:
 				case key.CodeReturnEnter:
@@ -252,7 +277,7 @@ func main() {
 				apos = image.Pt(int(e.X), int(e.Y))
 				if selecting {
 					cnt++
-					r := image.Rect(-2, -2, 2, 2).Add(apos)
+					r := brush.Add(apos)
 					fmt.Println("send")
 					d := Drawd{
 						hdr:   'd',
@@ -264,12 +289,26 @@ func main() {
 						srcid: 1,
 						sp:    Point{0, 0},
 					}
+					d=d
+					E := DrawE{
+						hdr:   'E',
+						dstid: 0,
+						srcid: 1,
+						c: Point{int32(apos.X), int32(apos.Y)},
+						a: uint32(brush.Dx()),
+						b: uint32(brush.Dy()), 
+						thick: uint32(brush.dx),
+						sp:    Point{0, 0},
+						alpha:    0,
+						phi:    1,
+					
+					}
 					bb := new(bytes.Buffer)
-					err := (&d).WriteBinary(bb)
+					err := (&E).WriteBinary(bb)
 					fmt.Printf("mouse event send %q", bb)
 					ck(err)
-					devdraw.out <- Msg{devdraw, d}
-					drawin <- Msg{devdraw, d}
+					devdraw.out <- Msg{devdraw, E}
+					drawin <- Msg{devdraw, E}
 				}
 				if e.Button == mouse.ButtonLeft {
 					if e.Direction == mouse.DirPress {
@@ -279,7 +318,6 @@ func main() {
 						selecting = false
 					}
 				}
-
 			case size.Event:
 			case paint.Event:
 				win.Upload(image.ZP, buf, buf.Bounds())
@@ -306,6 +344,10 @@ func main() {
 	})
 }
 
+type Brush struct{
+	image.Rectangle
+	dx, dy int
+}
 func ck(err error) {
 	if err != nil {
 		log.Fatalln(err)
@@ -319,8 +361,7 @@ func abs(a int) int {
 	return a
 }
 
-// DrawE dstid[4] srcid[4] c[8,Point] a[4] b[4] thick[4] sp[8,Point] alpha[4] phi[4]
-func Ellipse(dst draw.Image, c image.Point, src image.Image, a, b, thick float64, sp image.Point, alpha, phi int) {
+func XEllipse(dst draw.Image, c image.Point, src image.Image, a, b, thick float64, sp image.Point, alpha, phi int) {
 	for theta := float64(0); theta <= 2*math.Pi; theta += 0.1 {
 		x, y := int(math.Cos(theta)*a), int(math.Sin(theta)*b)
 		r := image.Rect(0, 0, 1, 1).Add(c)
@@ -333,9 +374,91 @@ func Line(dst draw.Image, p0, p1 image.Point, thick int, src image.Image, sp ima
 
 }
 
+var Plan9 = color.Palette(palette.Plan9)
+
+func drawGradient(dst draw.Image, r image.Rectangle){
+	lim := r.Dx()*r.Dy()
+	x, y := 0, 0
+	c := color.RGBA{255,0,0,255}
+
+	for i := 0; i < lim; i++{
+		switch {
+		case c.R == 255 && c.G == 0 && c.B == 0:
+			c.G++
+			y++
+			x = 0
+		case c.R == 255 && c.G != 255 && c.B == 0:
+			c.G++
+		case c.G == 255 && c.R != 0:
+			c.R--
+		case c.R == 0 && c.B != 255:
+			c.B++
+		case c.B == 255 && c.G != 0:
+			c.G--
+		case c.G == 0 && c.R != 255:
+			c.R++
+		default:
+			c.B--
+		}
+		dst.Set(y, x, c)
+		x++
+	}
+}
+
+
 func drawBorder(dst draw.Image, r image.Rectangle, src image.Image, sp image.Point, thick int) {
 	draw.Draw(dst, image.Rect(r.Min.X, r.Min.Y, r.Max.X, r.Min.Y+thick), src, sp, draw.Src)
 	draw.Draw(dst, image.Rect(r.Min.X, r.Max.Y-thick, r.Max.X, r.Max.Y), src, sp, draw.Src)
 	draw.Draw(dst, image.Rect(r.Min.X, r.Min.Y, r.Min.X+thick, r.Max.Y), src, sp, draw.Src)
 	draw.Draw(dst, image.Rect(r.Max.X-thick, r.Min.Y, r.Max.X, r.Max.Y), src, sp, draw.Src)
+}
+
+// Ellipse draws a filled ellipse at center point c
+// and eccentricity a and b. The thick argument is ignored
+// (until a line drawing function is available)
+//
+// The method uses an efficient integer-based rasterization
+// technique originally described in:
+//
+// McIlroy, M.D.: There is no royal road to programs: a trilogy
+// on raster ellipses and programming methodology,
+// Computer Science TR155, AT&T Bell Laboratories, 1990
+//
+
+func Ellipse(dst draw.Image, c image.Point, src image.Image, a, b, thick int, sp image.Point, alpha, phi int) {
+	xc, yc := c.X, c.Y
+	var (
+		x, y       = 0, b
+		a2, b2     = a * a, b * b
+		crit1      = -(a2/4 + a%2 + b2)
+		crit2      = -(b2/4 + b%2 + a2)
+		crit3      = -(b2/4 + b%2)
+		t          = -a2 * y
+		dxt, dyt   = 2 * b2 * x, -2 * a2 * y
+		d2xt, d2yt = 2 * b2, 2 * a2
+		incx       = func() { x++; dxt += d2xt; t += dxt }
+		incy       = func() { y--; dyt += d2yt; t += dyt }
+	)
+	point := func(x, y int) {
+		draw.Draw(dst, image.Rect(x, y, x+1, yc), src, sp, draw.Over)
+	}
+
+	for y >= 0 && x <= a {
+		point(xc+x, yc+y)
+		if x != 0 || y != 0 {
+			point(xc-x, yc-y)
+		}
+		if x != 0 && y != 0 {
+			point(xc+x, yc-y)
+			point(xc-x, yc+y)
+		}
+		if t+b2*x <= crit1 || t+a2*y <= crit3 {
+			incx()
+		} else if t-a2*y > crit2 {
+			incy()
+		} else {
+			incx()
+			incy()
+		}
+	}
 }

@@ -95,19 +95,19 @@ type Msg struct {
 
 var client bool
 
+var cyan = image.NewUniform(color.RGBA{0, 255, 255, 128})
+
 func main() {
 	joinc := make(chan *Client, 1)
 	drawin := make(chan Msg)
 	selecting := false
 	focused := false
 
-	cyan := image.NewUniform(color.RGBA{0, 255, 255, 255})
 	tick := time.NewTicker(time.Millisecond * 25)
 	driver.Main(func(src screen.Screen) {
 		win, _ := src.NewWindow(&screen.NewWindowOptions{winSize.X, winSize.Y})
 		tx, _ := src.NewTexture(winSize)
 		buf, _ := src.NewBuffer(winSize)
-		cyan = cyan
 		tx = tx
 		apos := image.ZP
 		win.Upload(image.ZP, buf, buf.Bounds())
@@ -132,7 +132,7 @@ func main() {
 				for e := range devdraw.out {
 					switch e := e.Value.(type) {
 					case DrawE:
-						Ellipse(dst, e.c.Canon(), src, int(e.a), int(e.b), int(e.thick), image.ZP, int(e.alpha), int(e.phi))
+						Ellipse(dst, e.c.Canon(), cyan, int(e.a), int(e.b), int(e.thick), image.ZP, int(e.alpha), int(e.phi))
 						ref()
 					case Drawd:
 						r := e.r
@@ -275,6 +275,11 @@ func main() {
 				win.Send(paint.Event{})
 			case mouse.Event:
 				apos = image.Pt(int(e.X), int(e.Y))
+				if e.Button == mouse.ButtonRight {
+					if e.Direction == mouse.DirPress {
+						cyan = image.NewUniform(buf.RGBA().At(apos.X,apos.Y))
+					}
+				}
 				if selecting {
 					cnt++
 					r := brush.Add(apos)
@@ -379,7 +384,7 @@ var Plan9 = color.Palette(palette.Plan9)
 func drawGradient(dst draw.Image, r image.Rectangle){
 	lim := r.Dx()*r.Dy()
 	x, y := 0, 0
-	c := color.RGBA{255,0,0,255}
+	c := color.RGBA{255,0,0,128}
 
 	for i := 0; i < lim; i++{
 		switch {

@@ -1,6 +1,7 @@
 
 ## paint
-  Multiplayer paint
+Multiplayer paint
+![paint](img/paint.png)
 
 ## Install
 

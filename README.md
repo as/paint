@@ -1,7 +1,7 @@
 
 ## paint
 Multiplayer paint
-![paint](img/paint2.png)
+![paint](img/paint3.png)
 
 ## Install
 
@@ -26,6 +26,7 @@ go install github.com/as/paint
 Mouse
 Right: Draw
 Left: Pick
+Middle: Mix
 
 Kbd
 Up: Increase

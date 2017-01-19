@@ -12,7 +12,6 @@ import (
 	"golang.org/x/mobile/event/size"
 	"image"
 	"image/color"
-	"image/draw"
 	_ "image/png"
 	"image/color/palette"
 	"io"
@@ -25,8 +24,52 @@ import (
 	"bytes"
 	"flag"
 	//"github.com/as/frame"	
+	"golang.org/x/image/draw"
+	"golang.org/x/image/math/f64"
  )
+ var(
+	cos30 = math.Cos(math.Pi / 6)
+	sin30 = math.Sin(math.Pi / 6)
+	)
 
+// {{A,B,A*x-x+B*y},
+// {-B, A, -B*x+A*y-y},
+
+func RotateMask(r image.Rectangle) image.Image{
+	dst := image.NewRGBA(r)
+	Ellipse(
+		dst,
+		image.Pt((r.Max.X-r.Min.X)/2,(r.Max.Y-r.Min.Y)/2),
+		image.NewUniform(color.Black),
+		r.Max.X/3,
+		r.Max.Y/3,
+		int(1), image.ZP, int(1), int(1),
+	)
+	return dst
+}
+
+var Sin5, Cos5  = math.Sin(5), math.Cos(5)
+func Rotate5(about image.Point) f64.Aff3{
+	A := Cos5
+	B := Sin5
+	x := float64(about.X)
+	y := float64(about.Y)
+	return f64.Aff3{
+		A,B,A*x-x+B*y,
+		-B, A, -B*x+A*y-y,
+	}
+}
+
+func Rotate(t float64, about image.Point) f64.Aff3 {
+	A := math.Cos(t)
+	B := math.Sin(t)
+	x := float64(about.X)
+	y := float64(about.Y)
+	return f64.Aff3{
+		A,B,A*x-x+B*y,
+		-B, A, -B*x+A*y-y,
+	}
+}
 var remote = flag.String("s", ":443", "endpoint to connect to or listen on (if host is omitted)")
 
 func init() {
@@ -64,6 +107,7 @@ var cnt int
 //wire9 Rectangle Min[,Point] Max[,Point]
 //wire9 Drawd hdr[1] dstid[4] srcid[4] maskid[4] r[,Rectangle] sp[,Point] maskp[,Point]
 //wire9 DrawE hdr[1] dstid[4] srcid[4] c[8,Point] a[4] b[4] thick[4] sp[8,Point] alpha[4] phi[4]
+//wire9 DrawAF hdr[1] dstid[4] srcid[4] r[,Rectangle] sp[,Point]
 
 func (r Rectangle) Canon() image.Rectangle {
 	return image.Rect(int(r.Min.X), int(r.Min.Y), int(r.Max.X), int(r.Max.Y))
@@ -100,10 +144,10 @@ var cyan = image.NewUniform(color.RGBA{0, 255, 255, 128})
 func main() {
 	joinc := make(chan *Client, 1)
 	drawin := make(chan Msg)
-	selecting := false
+	selecting := mouse.ButtonNone
 	focused := false
 
-	tick := time.NewTicker(time.Millisecond * 25)
+	tick := time.NewTicker(time.Millisecond * 15)
 	driver.Main(func(src screen.Screen) {
 		win, _ := src.NewWindow(&screen.NewWindowOptions{winSize.X, winSize.Y})
 		tx, _ := src.NewTexture(winSize)
@@ -121,6 +165,9 @@ func main() {
 			drawGradient(buf.RGBA(), image.Rect(0,0,180,256*7))
 			drawGradient(buf.RGBA(), image.Rect(0,0,180,256*7))
 			drawGradient(buf.RGBA(), image.Rect(0,0,180,256*7))
+			drawGrayscale(buf.RGBA(), image.Rect(256,winSize.Y-256,512,winSize.Y))
+			drawGrayscale(buf.RGBA(), image.Rect(256,winSize.Y-256,512,winSize.Y))
+			drawGrayscale(buf.RGBA(), image.Rect(256,winSize.Y-256,512,winSize.Y))
 			for {
 				ref := func(){
 						select {
@@ -137,10 +184,22 @@ func main() {
 					case Drawd:
 						r := e.r
 						sp := e.sp
-						fmt.Printf("dst=%d r=%v, src=%d, sp=%v\n", e.dstid, r, e.srcid, sp)
-						x := r.Canon()
-						fmt.Println(x)
+						//fmt.Printf("dst=%d r=%v, src=%d, sp=%v\n", e.dstid, r, e.srcid, sp)
+						//x := r.Canon()
+						//fmt.Println(x)
 						draw.Draw(dst, r.Canon(), src, sp.Canon(), draw.Over)
+						ref()
+					case DrawAF:
+						r := e.r
+						sp := e.sp
+//						x := r.Canon()
+						//fmt.Println(x)
+						draw.CatmullRom.Transform(dst, Rotate5(sp.Canon()), dst, r.Canon(), draw.Over, nil,
+						//	&draw.Options{
+						//	DstMaskP: sp.Canon(),
+						//	DstMask: RotateMask(r.Canon()),
+						//	}
+						)
 						ref()
 					case interface{}:
 						fmt.Printf("unknown message: %#v\n", e)
@@ -148,6 +207,8 @@ func main() {
 				}
 			}
 		}()
+
+// dst Image, s2d f64.Aff3, src image.Image, sr image.Rectangle, op Op, opts *Options
 
 		// Forwarder
 		// - registers remote clients
@@ -166,13 +227,13 @@ func main() {
 					clients[c.id] = c
 				case msg := <-drawin:
 					for _, c := range clients {
-						fmt.Println("send it to client", c.id)
+						//fmt.Println("send it to client", c.id)
 						if msg.Client.id == c.id {
-							fmt.Println("skip client", c.id)
+							//fmt.Println("skip client", c.id)
 							continue
 						}
 						if client && msg.Client.id != -1 && c.id != -1 {
-							fmt.Println("client skip", c.id)
+							//fmt.Println("client skip", c.id)
 							continue
 						}
 						c.out <- msg
@@ -204,7 +265,7 @@ func main() {
 				}
 				d := DrawE{}
 				(&d).ReadBinary(bytes.NewReader(buf[:n]))
-				fmt.Println("client: send", d)
+				//fmt.Println("client: send", d)
 				drawin <- Msg{Client: c, Value: d}
 			}
 		}
@@ -280,47 +341,54 @@ func main() {
 						cyan = image.NewUniform(buf.RGBA().At(apos.X,apos.Y))
 					}
 				}
-				if selecting {
+				if selecting != mouse.ButtonNone {
 					cnt++
 					r := brush.Add(apos)
-					fmt.Println("send")
-					d := Drawd{
-						hdr:   'd',
-						dstid: 0,
-						r: Rectangle{
-							Point{int32(r.Min.X), int32(r.Min.Y)},
-							Point{int32(r.Max.X), int32(r.Max.Y)},
-						},
-						srcid: 1,
-						sp:    Point{0, 0},
-					}
-					d=d
-					E := DrawE{
-						hdr:   'E',
-						dstid: 0,
-						srcid: 1,
-						c: Point{int32(apos.X), int32(apos.Y)},
-						a: uint32(brush.Dx()),
-						b: uint32(brush.Dy()), 
-						thick: uint32(brush.dx),
-						sp:    Point{0, 0},
-						alpha:    0,
-						phi:    1,
-					
-					}
-					bb := new(bytes.Buffer)
-					err := (&E).WriteBinary(bb)
-					fmt.Printf("mouse event send %q", bb)
-					ck(err)
-					devdraw.out <- Msg{devdraw, E}
-					drawin <- Msg{devdraw, E}
-				}
-				if e.Button == mouse.ButtonLeft {
+					if selecting == mouse.ButtonMiddle  {
+						AF := DrawAF{
+							hdr:   'A',
+							dstid: 0,
+							srcid: 0,
+							r: Rectangle{
+								Point{int32(r.Min.X), int32(r.Min.Y)},
+								Point{int32(r.Max.X), int32(r.Max.Y)},
+							},
+								//sp:    Point{0, 0},
+							sp: Point{int32(-apos.X), int32(-apos.Y)},
+						}
+						bb := new(bytes.Buffer)
+						err := (&AF).WriteBinary(bb)
+						//fmt.Printf("mouse event send %q", bb)
+						ck(err)
+						devdraw.out <- Msg{devdraw, AF}
+						drawin <- Msg{devdraw, AF}	
+					}else {
+						E := DrawE{
+							hdr:   'E',
+							dstid: 0,
+							srcid: 1,
+							c: Point{int32(apos.X), int32(apos.Y)},
+								a: uint32(brush.Dx()),
+							b: uint32(brush.Dy()), 
+							thick: uint32(brush.dx),
+							sp:    Point{0, 0},
+							alpha:    0,
+							phi:    1,
+						}
+						bb := new(bytes.Buffer)
+						err := (&E).WriteBinary(bb)
+						//fmt.Printf("mouse event send %q", bb)
+						ck(err)
+						devdraw.out <- Msg{devdraw, E}
+						drawin <- Msg{devdraw, E}
+				}}
+				
+				if e.Button == mouse.ButtonLeft|| e.Button == mouse.ButtonMiddle {
 					if e.Direction == mouse.DirPress {
-						selecting = true
+						selecting = e.Button
 					}
 					if e.Direction == mouse.DirRelease {
-						selecting = false
+						selecting = mouse.ButtonNone
 					}
 				}
 			case size.Event:
@@ -381,17 +449,33 @@ func Line(dst draw.Image, p0, p1 image.Point, thick int, src image.Image, sp ima
 
 var Plan9 = color.Palette(palette.Plan9)
 
+func drawGrayscale(dst draw.Image, r image.Rectangle){
+	c := color.NRGBA{0,0,0,0}
+	for x := 0; x < 256; x++{
+		c.R++
+		c.G++
+		c.B++
+		for y := 0; y < 256; y++{
+			c.A++
+			dst.Set(x+r.Min.X, y+r.Min.Y, c)
+		}
+		
+	}
+}
+
 func drawGradient(dst draw.Image, r image.Rectangle){
 	lim := r.Dx()*r.Dy()
 	x, y := 0, 0
-	c := color.RGBA{255,0,0,128}
-
+	c := color.NRGBA{255,0,0,255}
+	step := 255/float64(r.Dx())
+	sum := float64(0)
 	for i := 0; i < lim; i++{
 		switch {
 		case c.R == 255 && c.G == 0 && c.B == 0:
 			c.G++
 			y++
 			x = 0
+			sum = 0
 		case c.R == 255 && c.G != 255 && c.B == 0:
 			c.G++
 		case c.G == 255 && c.R != 0:
@@ -407,6 +491,17 @@ func drawGradient(dst draw.Image, r image.Rectangle){
 		}
 		dst.Set(y, x, c)
 		x++
+	}
+	sum = 0
+	step = 255/float64(r.Dx()/2)
+	for x := 0; x < r.Dx()/2; x++{
+		draw.Draw(dst, image.Rect(x, 0, x+1, r.Dy()), image.NewUniform(color.NRGBA{255,255,255,255-byte(sum)}), image.ZP, draw.Over)
+		sum += step
+	}
+	sum = 0
+	for x := 128; x < 255; x++{
+		draw.Draw(dst, image.Rect(x, 0, x+1, r.Dy()), image.NewUniform(color.NRGBA{0,0,0,byte(sum)}), image.ZP, draw.Over)
+		sum += step
 	}
 }
 
@@ -446,6 +541,9 @@ func Ellipse(dst draw.Image, c image.Point, src image.Image, a, b, thick int, sp
 	)
 	point := func(x, y int) {
 		draw.Draw(dst, image.Rect(x, y, x+1, yc), src, sp, draw.Over)
+		//draw.Draw(dst, image.Rect(x, y, x+1, y-1), src, sp, draw.Over)
+		// Perspective-retaining lines
+		//draw.Draw(dst, image.Rect(x, y, x+1, yc/2), src, sp, draw.Over)
 	}
 
 	for y >= 0 && x <= a {

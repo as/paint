@@ -56,6 +56,14 @@ type DrawE struct {
 	phi   uint32
 }
 
+type DrawAF struct {
+	hdr   byte
+	dstid uint32
+	srcid uint32
+	r     Rectangle
+	sp    Point
+}
+
 func (z *Point) ReadBinary(r io.Reader) (err error) {
 	if z == nil {
 		return fmt.Errorf("ReadBinary: z nil")
@@ -278,6 +286,59 @@ func (z DrawE) WriteBinary(w io.Writer) (err error) {
 	}
 
 	if err := binary.Write(w, binary.LittleEndian, z.phi); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (z *DrawAF) ReadBinary(r io.Reader) (err error) {
+	if z == nil {
+		return fmt.Errorf("ReadBinary: z nil")
+	}
+
+	if err := binary.Read(r, binary.LittleEndian, &z.hdr); err != nil {
+		return err
+	}
+
+	if err := binary.Read(r, binary.LittleEndian, &z.dstid); err != nil {
+		return err
+	}
+
+	if err := binary.Read(r, binary.LittleEndian, &z.srcid); err != nil {
+		return err
+	}
+
+	if err := z.r.ReadBinary(r); err != nil {
+		return err
+	}
+
+	if err := z.sp.ReadBinary(r); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (z DrawAF) WriteBinary(w io.Writer) (err error) {
+
+	if err := binary.Write(w, binary.LittleEndian, z.hdr); err != nil {
+		return err
+	}
+
+	if err := binary.Write(w, binary.LittleEndian, z.dstid); err != nil {
+		return err
+	}
+
+	if err := binary.Write(w, binary.LittleEndian, z.srcid); err != nil {
+		return err
+	}
+
+	if err := z.r.WriteBinary(w); err != nil {
+		return err
+	}
+
+	if err := z.sp.WriteBinary(w); err != nil {
 		return err
 	}
 

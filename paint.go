@@ -3,7 +3,8 @@ package main
 import (
 	//	"github.com/as/clip"
 	"fmt"
-	"golang.org/x/exp/shiny/driver"
+	"golang.org/x/exp/shiny/driver/gldriver"
+	//"golang.org/x/exp/shiny/driver"
 	"golang.org/x/exp/shiny/screen"
 	"golang.org/x/mobile/event/key"
 	"golang.org/x/mobile/event/lifecycle"
@@ -120,11 +121,14 @@ var winSize = image.Pt(2560, 1440)
 
 var cnt int
 
+type RGBA color.RGBA
+
 //wire9 Point X[4,int32] Y[4,int32]
 //wire9 Rectangle Min[,Point] Max[,Point]
-//wire9 Drawd hdr[1] dstid[4] srcid[4] maskid[4] r[,Rectangle] sp[,Point] maskp[,Point]
-//wire9 DrawE hdr[1] dstid[4] srcid[4] c[8,Point] a[4] b[4] thick[4] sp[8,Point] alpha[4] phi[4]
-//wire9 DrawAF hdr[1] dstid[4] srcid[4] r[,Rectangle] sp[,Point]
+//wire9 Drawd   hdr[1] dstid[4] srcid[4] maskid[4] r[,Rectangle] sp[,Point] maskp[,Point]
+//wire9 DrawE   hdr[1] dstid[4] srcid[4] c[8,Point] a[4] b[4] thick[4] sp[8,Point] alpha[4] phi[4]
+//wire9 DrawAF  hdr[1] dstid[4] srcid[4] r[,Rectangle] sp[,Point]
+//wire9 PickBrush hdr[1] rgba[,RGBA]
 
 func (r Rectangle) Canon() image.Rectangle {
 	return image.Rect(int(r.Min.X), int(r.Min.Y), int(r.Max.X), int(r.Max.Y))
@@ -147,6 +151,7 @@ type Client struct {
 	id     int
 	joined time.Time
 	out    chan Msg
+	color image.Image
 }
 
 type Wire interface{
@@ -169,7 +174,7 @@ func main() {
 	focused := false
 
 	tick := time.NewTicker(time.Millisecond * 25)
-	driver.Main(func(src screen.Screen) {
+		gldriver.Main(func(src screen.Screen) {
 		win, _ := src.NewWindow(&screen.NewWindowOptions{winSize.X, winSize.Y})
 		tx, _ := src.NewTexture(winSize)
 		buf, _ := src.NewBuffer(winSize)
@@ -195,10 +200,16 @@ func main() {
 					default:
 					}
 				}
-				for e := range devdraw.out {
-					switch e := e.Value.(type) {
+				for msg := range devdraw.out {
+					cl := msg.Client
+					if cl.color == nil{
+						cl.color = cyan
+					}
+					switch e := msg.Value.(type) {
+					case *PickBrush:
+						cl.color = image.NewUniform(color.RGBA(e.rgba))
 					case *DrawE:
-						go Ellipse(dst, e.c.Canon(), cyan, int(e.a), int(e.b), int(e.thick), image.ZP, int(e.alpha), int(e.phi))
+						go Ellipse(dst, e.c.Canon(), cl.color, int(e.a), int(e.b), int(e.thick), image.ZP, int(e.alpha), int(e.phi))
 						ref()
 					case Drawd:
 						r := e.r
@@ -208,15 +219,18 @@ func main() {
 						//fmt.Println(x)
 						draw.Draw(dst, r.Canon(), src, sp.Canon(), draw.Over)
 						ref()
+					
 					case *DrawAF:
 						r := e.r
 						sp := e.sp
 						//						x := r.Canon()
 						//fmt.Println(x)
-						go draw.CatmullRom.Transform(dst, Rotate5(sp.Canon()), dst, r.Canon(), draw.Over, 	&draw.Options{
-							DstMaskP: sp.Canon(),
-							DstMask: RotateMask(r.Canon().Add(sp.Canon())),
-							})
+						go draw.CatmullRom.Transform(dst, Rotate5(sp.Canon()), dst, r.Canon(), draw.Over, nil,
+						//	&draw.Options{
+						//		DstMaskP: sp.Canon(),
+						//		DstMask: RotateMask(r.Canon().Add(sp.Canon())),
+						//	},
+						)
 
 						ref()
 					case interface{}:
@@ -280,6 +294,10 @@ func main() {
 				}
 				var m interface{}
 				switch buf[0]{
+				case 'P': 
+					e := &PickBrush{}
+					e.ReadBinary(bytes.NewReader(buf[:n]))
+					m = e
 				case 'E': 
 					e := &DrawE{}
 					e.ReadBinary(bytes.NewReader(buf[:n]))
@@ -312,6 +330,7 @@ func main() {
 					c := &Client{
 						joined: time.Now(),
 						out:    make(chan Msg),
+						color: cyan,
 					}
 					joinc <- c
 					go handle(conn, c)
@@ -364,7 +383,11 @@ func main() {
 				apos = image.Pt(int(e.X), int(e.Y))
 				if e.Button == mouse.ButtonRight {
 					if e.Direction == mouse.DirPress {
-						cyan = image.NewUniform(buf.RGBA().At(apos.X, apos.Y))
+						col := buf.RGBA().At(apos.X, apos.Y)
+						r,g,b,a := col.RGBA()
+						P := &PickBrush{'P', RGBA{byte(r),byte(g),byte(b),byte(a)}}
+						devdraw.out <- Msg{devdraw, P}
+						drawin <- Msg{devdraw, P}
 					}
 				}
 				if selecting != mouse.ButtonNone {
@@ -379,7 +402,6 @@ func main() {
 								Point{int32(r.Min.X), int32(r.Min.Y)},
 								Point{int32(r.Max.X), int32(r.Max.Y)},
 							},
-							//sp:    Point{0, 0},
 							sp: Point{int32(-apos.X), int32(-apos.Y)},
 						}
 						bb := new(bytes.Buffer)

@@ -19,9 +19,10 @@ import (
 	"syscall"
 )
 
-func init(){
-	findDLLs()
+func init() {
+	findDLLs()
 }
+
 var debug = log.New(ioutil.Discard, "gl: ", log.LstdFlags)
 
 func downloadDLLs() (path string, err error) {
@@ -85,7 +86,7 @@ func downloadDLLs() (path string, err error) {
 		}
 		return nil
 	}
-	where := os.Args[0]+`\..`
+	where := os.Args[0] + `\..`
 	return where, writeDLLs(where)
 }
 
@@ -151,11 +152,12 @@ func chromePath() string {
 	return ""
 }
 
-var(
+var (
 	LibD3DCompiler,
 	LibGLESv2,
 	LibEGL syscall.LazyDLL
 )
+
 func findDLLs() (err error) {
 	load := func(path string) (bool, error) {
 		if path != "" {

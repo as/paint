@@ -40,23 +40,23 @@ var (
 func RotateMask(r image.Rectangle) image.Image {
 	var (
 		dst *image.RGBA
-		rr image.Rectangle
+		rr  image.Rectangle
 	)
-	func(){
+	func() {
 		if dst != nil && r == rr {
 			return
 		}
 		dst = image.NewRGBA(r)
-		col := image.NewUniform(color.RGBA{255,255,255,25})
-		for i := 1; i < 10; i++{
-		Ellipse(
-			dst,
-			image.Pt((r.Max.X-r.Min.X)/2, (r.Max.Y-r.Min.Y)/2),
-			col,
-			r.Dx()/i,
-			r.Dy()/i,
-			int(1), image.ZP, int(1), int(1),
-		)
+		col := image.NewUniform(color.RGBA{255, 255, 255, 25})
+		for i := 1; i < 10; i++ {
+			Ellipse(
+				dst,
+				image.Pt((r.Max.X-r.Min.X)/2, (r.Max.Y-r.Min.Y)/2),
+				col,
+				r.Dx()/i,
+				r.Dy()/i,
+				int(1), image.ZP, int(1), int(1),
+			)
 		}
 		rr = r
 	}()
@@ -151,10 +151,10 @@ type Client struct {
 	id     int
 	joined time.Time
 	out    chan Msg
-	color image.Image
+	color  image.Image
 }
 
-type Wire interface{
+type Wire interface {
 	WriteBinary(w io.Writer) error
 }
 
@@ -174,7 +174,7 @@ func main() {
 	focused := false
 
 	tick := time.NewTicker(time.Millisecond * 25)
-		gldriver.Main(func(src screen.Screen) {
+	gldriver.Main(func(src screen.Screen) {
 		win, _ := src.NewWindow(&screen.NewWindowOptions{winSize.X, winSize.Y})
 		tx, _ := src.NewTexture(winSize)
 		buf, _ := src.NewBuffer(winSize)
@@ -191,7 +191,7 @@ func main() {
 			drawGradient(buf.RGBA(), image.Rect(0, 0, 180, 256*7))
 			drawGradient(buf.RGBA(), image.Rect(0, 0, 180, 256*7))
 			drawGrayscale(buf.RGBA(), image.Rect(256, winSize.Y-256, 512, winSize.Y))
-		drawGrayscale(buf.RGBA(), image.Rect(256, winSize.Y-256, 512, winSize.Y))
+			drawGrayscale(buf.RGBA(), image.Rect(256, winSize.Y-256, 512, winSize.Y))
 			for {
 				ref := func() {
 					select {
@@ -202,7 +202,7 @@ func main() {
 				}
 				for msg := range devdraw.out {
 					cl := msg.Client
-					if cl.color == nil{
+					if cl.color == nil {
 						cl.color = cyan
 					}
 					switch e := msg.Value.(type) {
@@ -219,18 +219,16 @@ func main() {
 						//fmt.Println(x)
 						draw.Draw(dst, r.Canon(), src, sp.Canon(), draw.Over)
 						ref()
-					
+
 					case *DrawAF:
 						r := e.r
 						sp := e.sp
 						//						x := r.Canon()
 						//fmt.Println(x)
-						go draw.CatmullRom.Transform(dst, Rotate5(sp.Canon()), dst, r.Canon(), draw.Over, nil,
-						//	&draw.Options{
+						go draw.CatmullRom.Transform(dst, Rotate5(sp.Canon()), dst, r.Canon(), draw.Over, nil)//	&draw.Options{
 						//		DstMaskP: sp.Canon(),
 						//		DstMask: RotateMask(r.Canon().Add(sp.Canon())),
 						//	},
-						)
 
 						ref()
 					case interface{}:
@@ -239,7 +237,7 @@ func main() {
 				}
 			}
 		}()
-		joinc <- devdraw		
+		joinc <- devdraw
 
 		// dst Image, s2d f64.Aff3, src image.Image, sr image.Rectangle, op Op, opts *Options
 
@@ -293,12 +291,12 @@ func main() {
 					return
 				}
 				var m interface{}
-				switch buf[0]{
-				case 'P': 
+				switch buf[0] {
+				case 'P':
 					e := &PickBrush{}
 					e.ReadBinary(bytes.NewReader(buf[:n]))
 					m = e
-				case 'E': 
+				case 'E':
 					e := &DrawE{}
 					e.ReadBinary(bytes.NewReader(buf[:n]))
 					m = e
@@ -330,7 +328,7 @@ func main() {
 					c := &Client{
 						joined: time.Now(),
 						out:    make(chan Msg),
-						color: cyan,
+						color:  cyan,
 					}
 					joinc <- c
 					go handle(conn, c)
@@ -384,8 +382,8 @@ func main() {
 				if e.Button == mouse.ButtonRight {
 					if e.Direction == mouse.DirPress {
 						col := buf.RGBA().At(apos.X, apos.Y)
-						r,g,b,a := col.RGBA()
-						P := &PickBrush{'P', RGBA{byte(r),byte(g),byte(b),byte(a)}}
+						r, g, b, a := col.RGBA()
+						P := &PickBrush{'P', RGBA{byte(r), byte(g), byte(b), byte(a)}}
 						devdraw.out <- Msg{devdraw, P}
 						drawin <- Msg{devdraw, P}
 					}

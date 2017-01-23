@@ -27,6 +27,9 @@ import (
 	//"github.com/as/frame"
 	"golang.org/x/image/draw"
 	"golang.org/x/image/math/f64"
+	"image/png"
+	"io/ioutil"
+	_ "image/jpeg"
 )
 
 var (
@@ -34,57 +37,77 @@ var (
 	sin30 = math.Sin(math.Pi / 6)
 )
 
-// {{A,B,A*x-x+B*y},
-// {-B, A, -B*x+A*y-y},
 
-func RotateMask(r image.Rectangle) image.Image {
-	var (
-		dst *image.RGBA
-		rr image.Rectangle
-	)
-	func(){
-		if dst != nil && r == rr {
-			return
-		}
-		dst = image.NewRGBA(r)
-		col := image.NewUniform(color.RGBA{255,255,255,10})
-		for i := 1; i < 2; i++{
-		Ellipse(
-			dst,
-			image.Pt((r.Max.X-r.Min.X)/2, (r.Max.Y-r.Min.Y)/2),
+func RotateMask(c image.Point, a, b int) image.Image {
+	dst := image.NewRGBA(image.Rect(-a,-b,a,b).Add(c))
+	col := image.NewUniform(color.RGBA{255,255,255,32})
+	Ellipse(dst,
+			c,
 			col,
-			r.Dx()/i,
-			r.Dy()/i,
+			a,
+			b,
 			int(1), image.ZP, int(1), int(1),
-		)
-		}
-		rr = r
-	}()
+	)
 	return dst
 }
 
 var Sin5, Cos5 = math.Sin(5), math.Cos(5)
-var Sin1, Cos1 = math.Sin(1), math.Cos(1)
+var Sin1, Cos1 = math.Sin(math.Pi/180), math.Cos(math.Pi/180)
+var SinN1, CosN1 = math.Sin(-math.Pi/180), math.Cos(-math.Pi/180)
 
-func Rotate5(about image.Point) f64.Aff3 {
+func BackwardsRotate5(about image.Point) f64.Aff3 {
 	A := Cos1
 	B := Sin1
 	x := float64(about.X)
 	y := float64(about.Y)
 	return f64.Aff3{
-		A, B, A*x - x + B*y,
-		-B, A, -B*x + A*y - y,
+		B,  A, -x+B*x+A*y,
+		-A, B, -(A*x)-y+B*y,
 	}
 }
 
+
+func Rotate1(about image.Point) f64.Aff3 {
+	A := Sin1
+	B := Cos1
+	x := -float64(about.X)
+	y := -float64(about.Y)
+	return f64.Aff3{
+		B,  A, -x+B*x+A*y,
+		-A, B, -(A*x)-y+B*y,
+	}
+}
+func RotateN1(about image.Point) f64.Aff3 {
+	A := SinN1
+	B := CosN1
+	x := -float64(about.X)
+	y := -float64(about.Y)
+	return f64.Aff3{
+		B,  A, -x+B*x+A*y,
+		-A, B, -(A*x)-y+B*y,
+	}
+}
+func WhirlPool(about image.Point) f64.Aff3 {
+	A := -Sin1
+	B := -Cos1
+	x := -float64(about.X)
+	y := -float64(about.Y)
+	return f64.Aff3{
+		B,  A, -x+B*x+A*y,
+		-A, B, -(A*x)-y+B*y,
+	}
+}
+// {{B, A, -x + B*x + A*Y}, {-A, B, -(A*X) - Y + B*Y}, {0, 0, 1}}
+//  {B, A,  x - B*x - A*Y},{-A, B,   A*X  + Y - B*Y},
+
 func Rotate(t float64, about image.Point) f64.Aff3 {
-	A := math.Cos(t)
-	B := math.Sin(t)
+	A := math.Sin(t)
+	B := math.Cos(t)
 	x := float64(about.X)
 	y := float64(about.Y)
 	return f64.Aff3{
-		A, B, A*x - x + B*y,
-		-B, A, -B*x + A*y - y,
+		B,  A, -x+B*x+A*y,
+		-A, B, -(A*x)-y+B*y,
 	}
 }
 
@@ -117,7 +140,7 @@ func mustdecode(file string) draw.Image {
 	return img
 }
 
-var winSize = image.Pt(2560, 1440)
+var winSize = image.Pt(1920,1080)
 
 var cnt int
 
@@ -127,7 +150,9 @@ type RGBA color.RGBA
 //wire9 Rectangle Min[,Point] Max[,Point]
 //wire9 Drawd   hdr[1] dstid[4] srcid[4] maskid[4] r[,Rectangle] sp[,Point] maskp[,Point]
 //wire9 DrawE   hdr[1] dstid[4] srcid[4] c[8,Point] a[4] b[4] thick[4] sp[8,Point] alpha[4] phi[4]
-//wire9 DrawAF  hdr[1] dstid[4] srcid[4] r[,Rectangle] sp[,Point]
+//wire9 DrawAF  hdr[1] dstid[4] srcid[4] c[8,Point] a[4] b[4]
+//wire9 DrawY   hdr[1] dstid[4] r[,Rectangle] n[4,uint32] buf[n]
+//wire9 DrawL   hdr[1] dstid[4] srcid[4] p0[8,Point] p1[8,Point] thick[4]
 //wire9 PickBrush hdr[1] rgba[,RGBA]
 
 func (r Rectangle) Canon() image.Rectangle {
@@ -152,6 +177,7 @@ type Client struct {
 	joined time.Time
 	out    chan Msg
 	color image.Image
+	buf *image.RGBA
 }
 
 type Wire interface{
@@ -165,9 +191,9 @@ type Msg struct {
 
 var client bool
 
-var cyan = image.NewUniform(color.RGBA{0, 255, 255, 128})
+var cyan = image.NewUniform(color.NRGBA{0, 255, 255, 128})
 
-var sem = make(chan struct{}, 32)
+var sem = make(chan struct{}, 1024)
 func semaquire(){
 	sem <- struct{}{}
 }
@@ -175,9 +201,10 @@ func semrelease(){
 	<- sem
 }
 
+
 func main() {
 	joinc := make(chan *Client, 1)
-	drawin := make(chan Msg)
+	hubin := make(chan Msg)
 	selecting := mouse.ButtonNone
 	focused := false
 
@@ -192,15 +219,16 @@ func main() {
 
 		// Draw device - anything sent into its out channel gets drawn on the local
 		// screen
-		devdraw := &Client{id: -1, joined: time.Now(), out: make(chan Msg)}
+		devdraw := &Client{id: -1, joined: time.Now(), out: make(chan Msg, 10), buf: buf.RGBA()}
 		go func() {
 			src, dst := cyan, buf.RGBA()
 			drawGradient(buf.RGBA(), image.Rect(0, 0, 180, 256*7))
 			drawGradient(buf.RGBA(), image.Rect(0, 0, 180, 256*7))
 			drawGradient(buf.RGBA(), image.Rect(0, 0, 180, 256*7))
 			drawGrayscale(buf.RGBA(), image.Rect(256, winSize.Y-256, 512, winSize.Y))
-			drawGrid(buf.RGBA(), buf.Bounds(), 10,10)
+			//drawGrid(buf.RGBA(), buf.Bounds(), 10,10)
 		drawGrayscale(buf.RGBA(), image.Rect(256, winSize.Y-256, 512, winSize.Y))
+		win.Upload(image.ZP, buf, buf.Bounds())
 			for {
 				ref := func() {
 					select {
@@ -218,7 +246,9 @@ func main() {
 					case *PickBrush:
 						cl.color = image.NewUniform(color.RGBA(e.rgba))
 					case *DrawE:
-						go Ellipse(dst, e.c.Canon(), cl.color, int(e.a), int(e.b), int(e.thick), image.ZP, int(e.alpha), int(e.phi))
+						a, b, c := int(e.a), int(e.b), e.c.Canon()
+						go Ellipse(buf.RGBA(), c, cl.color, a, b, int(e.thick), image.ZP, int(e.alpha), int(e.phi))
+						go win.Upload(c.Sub(image.Pt(a,b)), buf, image.Rect(-a,-b,a,b).Add(c))
 						ref()
 					case Drawd:
 						r := e.r
@@ -230,22 +260,33 @@ func main() {
 						ref()
 					
 					case *DrawAF:
-						r := e.r.Canon()
-						sp := e.sp.Canon()
-						semaquire()
-						go func(){
-							draw.CatmullRom.Transform(dst, Rotate5(sp), dst, r, draw.Over, nil,
-						//	&draw.Options{							
-						//		DstMaskP: sp,
-						//		DstMask: RotateMask(r.Add(image.Pt(r.Dx()/2,r.Dy()/2)).Add(sp)),								
-						//	},
-							)
-							semrelease()
-						}()
+						c := e.c.Canon()
+						a := int(e.a)
+						b := int(e.b)
+						dst := buf.RGBA()
+						//semaquire()
+						//fmt.Printf("c=%s a=%s b=%s image.Rect(-a,-b,a,b).Add(c)=%s \n", c,a,b,image.Rect(-a,-b,a,b).Add(c))
+						go draw.CatmullRom.Transform(dst, RotateN1(c), dst, image.Rect(-a,-b,a,b).Add(c), draw.Over, &draw.Options{DstMask: RotateMask(c,a,b)})
+						go draw.CatmullRom.Transform(dst, WhirlPool(c), dst, image.Rect(-a,-b,a,b).Add(c), draw.Over, &draw.Options{DstMask: RotateMask(c,a,b)})
+						go draw.CatmullRom.Transform(dst, Rotate1(c), dst, image.Rect(-a,-b,a,b).Add(c), draw.Over, &draw.Options{DstMask: RotateMask(c,a,b)})
+						go win.Upload(c.Sub(image.Pt(a,b)), buf, image.Rect(-a,-b,a,b).Add(c))
+						//semrelease()
 
 						ref()
+					case *DrawY:
+						r := e.r.Canon()
+						fmt.Printf("%#v\n",r)
+						img, _ := png.Decode(bytes.NewReader(e.buf))
+						draw.Draw(buf.RGBA(), r, img, image.ZP, draw.Src)
+					case *DrawL:
+						p0 := e.p0.Canon()	
+						p1 := e.p1.Canon()
+						dst := buf.RGBA()
+						drawLine(dst, p0, p1, cl.color, image.ZP, 1)
+						go win.Upload(image.ZP, buf, buf.Bounds())
+						ref()
 					case interface{}:
-						fmt.Printf("unknown message: %#v\n", e)
+							fmt.Printf("unknown message: %#v\n", e)
 					}
 				}
 			}
@@ -254,7 +295,7 @@ func main() {
 
 		// dst Image, s2d f64.Aff3, src image.Image, sr image.Rectangle, op Op, opts *Options
 
-		// Forwarder
+		// Hub
 		// - registers remote clients
 		// - sends draw messages generated by GUI actions to the local and remote clients
 		go func() {
@@ -268,8 +309,21 @@ func main() {
 						n++
 					}
 					fmt.Printf("Client %d joined\n", c.id)
+					/*
+					if c.id > 0{
+						b := new(bytes.Buffer)
+						png.Encode(b, buf.RGBA())
+						c.out <- Msg{c, &DrawY{'Y',
+							1, // todo:dst
+							Rectangle{Point{0,0},Point{500,500}},
+							uint32(b.Len()),
+							b.Bytes(),
+						}}
+					}
+					*/
 					clients[c.id] = c
-				case msg := <-drawin:
+				case msg := <-hubin:
+					devdraw.out <- msg
 					for _, c := range clients {
 						//fmt.Println("send it to client", c.id)
 						if msg.Client.id == c.id {
@@ -309,6 +363,9 @@ func main() {
 					e := &PickBrush{}
 					e.ReadBinary(bytes.NewReader(buf[:n]))
 					m = e
+				case 'L': 
+					e := &DrawL{}
+					e.ReadBinary(bytes.NewReader(buf[:n]))
 				case 'E': 
 					e := &DrawE{}
 					e.ReadBinary(bytes.NewReader(buf[:n]))
@@ -317,11 +374,15 @@ func main() {
 					a := &DrawAF{}
 					a.ReadBinary(bytes.NewReader(buf[:n]))
 					m = a
+				case 'Y':
+					a := &DrawY{}
+					a.ReadBinary(bytes.NewReader(buf[:n]))
+					m = a
 				default:
 					fmt.Println("unknown draw message")
 					continue
 				}
-				drawin <- Msg{Client: c, Value: m}
+				hubin <- Msg{Client: c, Value: m}
 			}
 		}
 
@@ -340,8 +401,9 @@ func main() {
 					}
 					c := &Client{
 						joined: time.Now(),
-						out:    make(chan Msg),
+						out:    make(chan Msg, 10),
 						color: cyan,
+						buf: image.NewRGBA(image.Rectangle{image.ZP, winSize}),
 					}
 					joinc <- c
 					go handle(conn, c)
@@ -353,7 +415,8 @@ func main() {
 			ck(err)
 			c := &Client{
 				joined: time.Now(),
-				out:    make(chan Msg),
+				out:    make(chan Msg, 10),
+				buf: image.NewRGBA(image.Rectangle{image.ZP, winSize}),
 			}
 			client = true
 			joinc <- c
@@ -366,14 +429,33 @@ func main() {
 			1,
 			1,
 		}
+		gilchbuf, err := ioutil.ReadFile(`C:\gilch.png`)
+		ck(err)
+		gilch, err := png.Decode(bytes.NewReader(gilchbuf))
+		ck(err)
+		
+		var line bool
+		linep0 := image.ZP
 		for {
 			switch e := win.NextEvent().(type) {
 			case key.Event:
-				if e.Direction != key.DirPress && e.Direction != key.DirNone {
+				if e.Direction != key.DirPress && selecting == mouse.ButtonNone  {
 					break
 				}
 				r := brush.Rectangle
 				switch e.Code {
+				case key.CodeL:
+					line = !line
+				case key.CodeG:
+					r := gilch.Bounds()
+					Y := &DrawY{'Y',
+							1, // todo:dst
+							Rectangle{Point{int32(r.Min.X), int32(r.Min.Y)},Point{int32(r.Max.X), int32(r.Max.Y)}},
+							uint32(len(gilchbuf)),
+							gilchbuf,
+						}
+						//devdraw.out <- Msg{devdraw, Y}
+						hubin <- Msg{devdraw, Y}
 				case key.CodeUpArrow:
 					brush.Rectangle = image.Rect(
 						r.Min.X-brush.dx, r.Min.Y-brush.dy,
@@ -397,30 +479,42 @@ func main() {
 						col := buf.RGBA().At(apos.X, apos.Y)
 						r,g,b,a := col.RGBA()
 						P := &PickBrush{'P', RGBA{byte(r),byte(g),byte(b),byte(a)}}
-						devdraw.out <- Msg{devdraw, P}
-						drawin <- Msg{devdraw, P}
+						//devdraw.out <- Msg{devdraw, P}
+						hubin <- Msg{devdraw, P}
 					}
-				}
+				} 
+				
 				if selecting != mouse.ButtonNone {
 					cnt++
-					r := brush.Add(apos)
 					if selecting == mouse.ButtonMiddle {
 						AF := &DrawAF{
 							hdr:   'A',
 							dstid: 0,
 							srcid: 0,
-							r: Rectangle{
-								Point{int32(r.Min.X), int32(r.Min.Y)},
-								Point{int32(r.Max.X), int32(r.Max.Y)},
-							},
-							sp: Point{int32(-apos.X), int32(-apos.Y)},
+							c: Point{int32(apos.X), int32(apos.Y)},
+							a: uint32(brush.Dx()),
+							b: uint32(brush.Dy()),
 						}
 						bb := new(bytes.Buffer)
 						err := (AF).WriteBinary(bb)
 						//fmt.Printf("mouse event send %q", bb)
 						ck(err)
-						devdraw.out <- Msg{devdraw, AF}
-						drawin <- Msg{devdraw, AF}
+						//devdraw.out <- Msg{devdraw, AF}
+						hubin <- Msg{devdraw, AF}
+					} else if line{
+
+							E := &DrawL{
+								hdr:   'L',
+								dstid: 0,
+								srcid: 1,
+								p0:     Point{int32(linep0.X), int32(linep0.Y)},
+								p1:     Point{int32(apos.X), int32(apos.Y)},
+								thick: uint32(2+brush.dx),
+							}
+							bb := new(bytes.Buffer)
+							err := (E).WriteBinary(bb)
+							ck(err)
+						hubin <- Msg{devdraw, E}
 					} else {
 						E := &DrawE{
 							hdr:   'E',
@@ -438,14 +532,15 @@ func main() {
 						err := (E).WriteBinary(bb)
 						//fmt.Printf("mouse event send %q", bb)
 						ck(err)
-						devdraw.out <- Msg{devdraw, E}
-						drawin <- Msg{devdraw, E}
+						//devdraw.out <- Msg{devdraw, E}
+						hubin <- Msg{devdraw, E}
 					}
 				}
 
 				if e.Button == mouse.ButtonLeft || e.Button == mouse.ButtonMiddle {
 					if e.Direction == mouse.DirPress {
 						selecting = e.Button
+						linep0 = apos
 					}
 					if e.Direction == mouse.DirRelease {
 						selecting = mouse.ButtonNone
@@ -453,10 +548,9 @@ func main() {
 				}
 			case size.Event:
 			case paint.Event:
-				win.Upload(image.ZP, buf, buf.Bounds())
 				//win.Copy(buf.Bounds().Min, tx, tx.Bounds(), screen.Over, nil)
 				if !focused {
-					//win.Copy(buf.Bounds().Min, tx, tx.Bounds(), screen.Over, nil)
+					win.Copy(buf.Bounds().Min, tx, tx.Bounds(), screen.Over, nil)
 				}
 				win.Publish()
 			case lifecycle.Event:
@@ -581,6 +675,22 @@ func drawBorder(dst draw.Image, r image.Rectangle, src image.Image, sp image.Poi
 	draw.Draw(dst, image.Rect(r.Min.X, r.Min.Y, r.Min.X+thick, r.Max.Y), src, sp, draw.Src)
 	draw.Draw(dst, image.Rect(r.Max.X-thick, r.Min.Y, r.Max.X, r.Max.Y), src, sp, draw.Src)
 }
+
+func drawLine(dst draw.Image, p0, p1 image.Point, src image.Image, sp image.Point, thick int){
+	dy := p1.Y-p0.Y
+	dx := p1.X-p0.X
+	d := 2*dy-dx
+	for p0.X < p1.X {
+		draw.Draw(dst, image.Rect(p0.X,    p0.Y,  p0.X+1,   p0.Y+1), src, sp, draw.Over)
+		if d > 0{
+			p0.Y++
+			d -= dx
+		}
+		d += dy
+		p0.X++
+	}
+}
+
 
 // Ellipse draws a filled ellipse at center point c
 // and eccentricity a and b. The thick argument is ignored

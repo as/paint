@@ -60,8 +60,31 @@ type DrawAF struct {
 	hdr   byte
 	dstid uint32
 	srcid uint32
+	c     Point
+	a     uint32
+	b     uint32
+}
+
+type DrawY struct {
+	hdr   byte
+	dstid uint32
 	r     Rectangle
-	sp    Point
+	n     uint32
+	buf   []byte
+}
+
+type DrawL struct {
+	hdr   byte
+	dstid uint32
+	srcid uint32
+	p0    Point
+	p1    Point
+	thick uint32
+}
+
+type PickBrush struct {
+	hdr  byte
+	rgba RGBA
 }
 
 func (z *Point) ReadBinary(r io.Reader) (err error) {
@@ -309,11 +332,19 @@ func (z *DrawAF) ReadBinary(r io.Reader) (err error) {
 		return err
 	}
 
-	if err := z.r.ReadBinary(r); err != nil {
+	{
+
+		r := io.LimitReader(r, int64(8))
+		if err := z.c.ReadBinary(r); err != nil {
+			return err
+		}
+	}
+
+	if err := binary.Read(r, binary.LittleEndian, &z.a); err != nil {
 		return err
 	}
 
-	if err := z.sp.ReadBinary(r); err != nil {
+	if err := binary.Read(r, binary.LittleEndian, &z.b); err != nil {
 		return err
 	}
 
@@ -334,11 +365,171 @@ func (z DrawAF) WriteBinary(w io.Writer) (err error) {
 		return err
 	}
 
+	if err := z.c.WriteBinary(w); err != nil {
+		return err
+	}
+
+	if err := binary.Write(w, binary.LittleEndian, z.a); err != nil {
+		return err
+	}
+
+	if err := binary.Write(w, binary.LittleEndian, z.b); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (z *DrawY) ReadBinary(r io.Reader) (err error) {
+	if z == nil {
+		return fmt.Errorf("ReadBinary: z nil")
+	}
+
+	if err := binary.Read(r, binary.LittleEndian, &z.hdr); err != nil {
+		return err
+	}
+
+	if err := binary.Read(r, binary.LittleEndian, &z.dstid); err != nil {
+		return err
+	}
+
+	if err := z.r.ReadBinary(r); err != nil {
+		return err
+	}
+
+	if err := binary.Read(r, binary.LittleEndian, &z.n); err != nil {
+		return err
+	}
+
+	z.buf = make([]byte, int(z.n))
+
+	if n, err := r.Read(z.buf); err != nil || n != int(z.n) {
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("expected %d bytes, got %d", int(z.n), n)
+	}
+
+	return nil
+}
+
+func (z DrawY) WriteBinary(w io.Writer) (err error) {
+
+	if err := binary.Write(w, binary.LittleEndian, z.hdr); err != nil {
+		return err
+	}
+
+	if err := binary.Write(w, binary.LittleEndian, z.dstid); err != nil {
+		return err
+	}
+
 	if err := z.r.WriteBinary(w); err != nil {
 		return err
 	}
 
-	if err := z.sp.WriteBinary(w); err != nil {
+	if err := binary.Write(w, binary.LittleEndian, z.n); err != nil {
+		return err
+	}
+
+	if n, err := w.Write(z.buf); err != nil || n != int(z.n) {
+		return err
+	}
+
+	return nil
+}
+
+func (z *DrawL) ReadBinary(r io.Reader) (err error) {
+	if z == nil {
+		return fmt.Errorf("ReadBinary: z nil")
+	}
+
+	if err := binary.Read(r, binary.LittleEndian, &z.hdr); err != nil {
+		return err
+	}
+
+	if err := binary.Read(r, binary.LittleEndian, &z.dstid); err != nil {
+		return err
+	}
+
+	if err := binary.Read(r, binary.LittleEndian, &z.srcid); err != nil {
+		return err
+	}
+
+	{
+
+		r := io.LimitReader(r, int64(8))
+		if err := z.p0.ReadBinary(r); err != nil {
+			return err
+		}
+	}
+
+	{
+
+		r := io.LimitReader(r, int64(8))
+		if err := z.p1.ReadBinary(r); err != nil {
+			return err
+		}
+	}
+
+	if err := binary.Read(r, binary.LittleEndian, &z.thick); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (z DrawL) WriteBinary(w io.Writer) (err error) {
+
+	if err := binary.Write(w, binary.LittleEndian, z.hdr); err != nil {
+		return err
+	}
+
+	if err := binary.Write(w, binary.LittleEndian, z.dstid); err != nil {
+		return err
+	}
+
+	if err := binary.Write(w, binary.LittleEndian, z.srcid); err != nil {
+		return err
+	}
+
+	if err := z.p0.WriteBinary(w); err != nil {
+		return err
+	}
+
+	if err := z.p1.WriteBinary(w); err != nil {
+		return err
+	}
+
+	if err := binary.Write(w, binary.LittleEndian, z.thick); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (z *PickBrush) ReadBinary(r io.Reader) (err error) {
+	if z == nil {
+		return fmt.Errorf("ReadBinary: z nil")
+	}
+
+	if err := binary.Read(r, binary.LittleEndian, &z.hdr); err != nil {
+		return err
+	}
+
+	if err := binary.Read(r, binary.LittleEndian, &z.rgba); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (z PickBrush) WriteBinary(w io.Writer) (err error) {
+
+	if err := binary.Write(w, binary.LittleEndian, z.hdr); err != nil {
+		return err
+	}
+
+	if err := binary.Write(w, binary.LittleEndian, z.rgba); err != nil {
 		return err
 	}
 

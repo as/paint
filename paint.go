@@ -283,7 +283,7 @@ func main() {
 
 	tick := time.NewTicker(time.Millisecond * 25)
 	gldriver.Main(func(src screen.Screen) {
-		win, _ := src.NewWindow(&screen.NewWindowOptions{winSize.X, winSize.Y})
+		win, _ := src.NewWindow(&screen.NewWindowOptions{winSize.X, winSize.Y, "paint"})
 		heap := NewHeap(src)
 		apos := image.ZP
 
